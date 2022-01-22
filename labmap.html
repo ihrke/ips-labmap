@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<head>
+    <meta name="viewport" id="vp" content="initial-scale=1.0,user-scalable=no,maximum-scale=1,width=device-width" />
+    <meta charset="utf-8" />
+
+    <link rel="stylesheet" href="https://api.mazemap.com/js/v2.0.63/mazemap.min.css">
+    <script type='text/javascript' src='https://api.mazemap.com/js/v2.0.63/mazemap.min.js'></script>
+
+    <!-- https://stackoverflow.com/questions/8238407/how-to-parse-excel-file-in-javascript-html5 -->
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <script type='text/javascript' src='excelfuncs.js'></script>
+
+    <style>
+        body { margin:0px; padding:0px; width: 100vw; height:100vh; font-family: "Helvetica Neue",Helvetica,Arial,sans-serif; font-size: 14px; line-height: 1.42857143; }
+        hr { border: 0; height: 1px; background-color: rgb(216, 216, 216); }
+        #map {width: 50% !important;}
+        #poidata {border-left: 1px solid rgb(230, 230, 230); width: 50%; position: absolute; right: 0px; top: 0px; height: 100%; padding: 10px; box-sizing: border-box; overflow: auto;}
+        #controls{
+            position: absolute;
+            box-sizing: border-box;
+            padding: 10px;
+            top: 10px;
+            left: 10px;
+            width: auto;
+            height: auto;
+        }
+        #controls select{
+            margin-top: 10px;
+            background-color: rgb(31, 175, 252);
+            padding: 0px 10px;
+            border-radius: 4px;
+            color: rgb(255, 255, 255);
+            width: auto;
+            border: 0;
+            display: inline-block;
+        }        
+    </style>
+</head>
+<body>
+    <div id="map" class="mazemap"></div>
+    <div id="controls" class="mapboxgl-ctrl-group">
+        Click in the map to set the center. Use the buttons to change other properties.<br />
+        <select><option>hallo</option></select>
+    </div>    
+    <div id="poidata"><h2>POI Data</h2><hr /><pre><code id="poi-data"></code></pre></div>
+
+    <script>
+
+        // to be populated with Excel-file
+        var roomlist;
+
+        // Just the same way to initialize as always...
+        var myMap = new Mazemap.Map({
+            container: 'map',
+            //config:'uit',
+            campuses: 5, // Tromso
+            center: {lng: 18.969846, lat: 69.682122},
+            zoom: 18,
+            zLevel: 3,
+            scrollZoom: true,
+            doubleClickZoom: false,
+            touchZoomRotate: false
+        });
+
+        myMap.on('load', function(){
+            // Initialize a Highlighter for POIs
+            // Storing the object on the map just makes it easy to access for other things
+            myMap.highlighter = new Mazemap.Highlighter( myMap, {
+                showOutline: true,
+                showFill: true,
+                outlineColor: Mazemap.Util.Colors.MazeColors.MazeBlue,
+                fillColor: Mazemap.Util.Colors.MazeColors.MazeBlue
+            } );
+            myMap.on('click', onMapClick);
+
+            addCustomLayer();
+            roomlist = readExcel();
+            roomlist.then(drawFeatures)
+                .catch( e => console.warn );
+
+            addClickEvents();
+        });
+
+        function addCustomLayer(){
+            // Add a source layer to use with the layer for rendering geojson features
+            myMap.addSource('geojsonPOIs', {type: 'geojson', data: {type: 'FeatureCollection', features: [] } });
+
+            myMap.addLayer({
+                id: "geojsonPOIs",
+                type: "fill",
+                source: "geojsonPOIs",
+                paint: {
+                    "fill-color":{type: "identity", "property": "highlight-color"},
+                    "fill-opacity": 0.5
+                },
+                //filter: ['==', 'zLevel', 3]
+            });
+
+            myMap.on('zlevel', () => {
+                myMap.setFilter("geojsonPOIs", ['==', 'zLevel', myMap.getZLevel()]);
+            });
+        }
+
+        function addClickEvents(){
+
+            myMap.layerEventHandler.on('click', 'geojsonPOIs', (e, features) => {
+                console.log('Clicked layer geojsonPOIs', e, features);
+                var feature = features && features[0];
+                showPopupOnPoi( feature, e.lngLat );
+            })
+
+            myMap.layerEventHandler.on('click', null, (e) => {
+                Mazemap.Data.getPoiAt( e.lngLat, myMap.getZLevel() )
+                .then( ( poi ) => {
+                    console.log('Clicked on the base map, poi here is:', poi);
+                });
+            })
+        }
+
+        // Take an array of maemap features and draw them on the map
+        function drawFeatures( featuresArray ){
+            console.log(featuresArray);
+            myMap.getSource("geojsonPOIs").setData( {type: "FeatureCollection", features: featuresArray});
+        }
+
+        function readExcel(){
+            var rl=readExcelFile("lablist.xlsx").then( (workbook) => {
+                var sheet = window.sheet = new ExcelSheet(workbook.Sheets[ workbook.SheetNames[0] ]);
+
+                var jsonRows = sheet.getRangeAsJSON("A1:E10")
+                        .filter( (a) => {return Object.keys(a).length>0;});
+                var rl = fetchIdentifiers( jsonRows, "mazemap-id" );
+                return rl;
+            });
+            return rl;
+        }
+
+        // Take an identifier array and return the data results for all
+        function fetchIdentifiers( poisArray, identifierKey ){
+            // Take the identifiers array and transform to new array of actual poi requests
+            var roomRequests = poisArray.map( (poiObject) => {
+                var request = Mazemap.Data.getPois({campusid: 5, identifier: poiObject[identifierKey]})
+                        .then( (arr) => {
+                            // Only return the FIRST result of an identifier search
+                            return arr[0];
+                        } )
+                        .catch( (e) => {
+                        }).then( (feature) => { return feature || false })
+                        .then( (feature) => {
+                            Object.assign( feature.properties, poiObject );
+                            return feature;
+                        });
+
+                return request;
+            });
+
+            // When all the requests are processed, do filter the results and return them
+            return Promise.all( roomRequests ).then( (results) => {
+                // If some results was FALSE, filter out those
+                return results.filter( f => f);
+            });
+        }
+
+        // define a global
+        var mazeMarker;
+
+        function onMapClick(e){
+            // Clear existing, if any
+            clearPoiMarker();
+
+            var lngLat = e.lngLat;
+            var zLevel = myMap.zLevel;
+
+            // Fetching via Data API
+            Mazemap.Data.getPoiAt(lngLat, zLevel).then( poi => {
+
+                printPoiData(poi);
+
+                placePoiMarker(poi);
+
+            }).catch( function(){ return false; } );
+        }
+
+        function printPoiData(poi){
+            var poiStr = JSON.stringify(poi, null, 2); // spacing level = 2
+            document.getElementById('poi-data').innerHTML = poiStr;
+
+            console.log(poi); // Can also look in your console to see the object there
+        }
+
+        function clearPoiMarker(poi){
+            if(mazeMarker){
+                mazeMarker.remove();
+            }
+            myMap.highlighter.clear();
+        };
+
+        function placePoiMarker(poi){
+
+            // Get a center point for the POI, because the data can return a polygon instead of just a point sometimes
+            var lngLat = Mazemap.Util.getPoiLngLat(poi);
+
+            mazeMarker = new Mazemap.MazeMarker({
+                color: '#ff00cc',
+                innerCircle: true,
+                innerCircleColor: '#FFF',
+                size: 34,
+                innerCircleScale: 0.5,
+                zLevel: poi.properties.zLevel
+            })
+            .setLngLat(lngLat)
+            .addTo(myMap);
+
+            // If we have a polygon, use the default 'highlight' function to draw a marked outline around the POI.
+            if(poi.geometry.type === "Polygon"){
+                myMap.highlighter.highlight(poi);
+            }
+            myMap.flyTo({center: lngLat, zoom: 19, speed: 0.5});
+        }
+    </script>
+</body>
