@@ -1,4 +1,4 @@
-
+ 
 /* EXCEL RELATED FUNCTIONS */
 
 /* Copied from read example at https://github.com/SheetJS/js-xlsx and made into a promise object */
