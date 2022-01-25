@@ -11,43 +11,34 @@
     <script type='text/javascript' src='excelfuncs.js'></script>
 
     <style>
+        .row { display: flex;  }
+        .column { flex: 50%; padding:20px; }
         body { margin:0px; padding:0px; width: 100vw; height:100vh; font-family: "Helvetica Neue",Helvetica,Arial,sans-serif; font-size: 14px; line-height: 1.42857143; }
         hr { border: 0; height: 1px; background-color: rgb(216, 216, 216); }
-        #map {width: 50% !important;}
-        #poidata {border-left: 1px solid rgb(230, 230, 230); width: 50%; position: absolute; right: 0px; top: 0px; height: 100%; padding: 10px; box-sizing: border-box; overflow: auto;}
-        #controls{
-            position: absolute;
-            box-sizing: border-box;
-            padding: 10px;
-            top: 10px;
-            left: 10px;
-            width: auto;
-            height: auto;
-        }
-        #controls select{
-            margin-top: 10px;
-            background-color: rgb(31, 175, 252);
-            padding: 0px 10px;
-            border-radius: 4px;
-            color: rgb(255, 255, 255);
-            width: auto;
-            border: 0;
-            display: inline-block;
-        }        
+        #map {width: 100% !important; height: 40%; position:relative;}
+        #labinfo {border-top: 1px solid rgb(230, 230, 230);  padding: 100px; box-sizing: border-box; overflow: auto;}
     </style>
 </head>
 <body>
+    <H1>Labs at the institute for psychology, UiT</H1>
     <div id="map" class="mazemap"></div>
+<!--optional controls
     <div id="controls" class="mapboxgl-ctrl-group">
         Click in the map to set the center. Use the buttons to change other properties.<br />
         <select><option>hallo</option></select>
-    </div>    
-    <div id="poidata"><h2>POI Data</h2><hr /><pre><code id="poi-data"></code></pre></div>
-
+    </div>    --> 
+    <div class="row">
+    <div class="column">
+        <h2>Room Info: <div id="room-num"></div></h2>
+        <hr />
+        <div id="lab-info"></div>
+    </div>
+    <div class="column" id="labimages"><h3>Images:</h3>No images available</div>
+    </div>
     <script>
 
         // to be populated with Excel-file
-        var roomlist;
+        var lablist;
 
         // Just the same way to initialize as always...
         var myMap = new Mazemap.Map({
@@ -56,7 +47,7 @@
             campuses: 5, // Tromso
             center: {lng: 18.969846, lat: 69.682122},
             zoom: 18,
-            zLevel: 3,
+            zLevel: 4,
             scrollZoom: true,
             doubleClickZoom: false,
             touchZoomRotate: false
@@ -70,15 +61,20 @@
                 showFill: true,
                 outlineColor: Mazemap.Util.Colors.MazeColors.MazeBlue,
                 fillColor: Mazemap.Util.Colors.MazeColors.MazeBlue
-            } );
+            } ); 
             myMap.on('click', onMapClick);
 
             addCustomLayer();
-            roomlist = readExcel();
-            roomlist.then(drawFeatures)
+            lablist = readExcel();
+            lablist.then(drawFeatures)
                 .catch( e => console.warn );
 
             addClickEvents();
+            
+            myMap.flyTo({
+                zLevel:3
+            });
+
         });
 
         function addCustomLayer(){
@@ -93,7 +89,7 @@
                     "fill-color":{type: "identity", "property": "highlight-color"},
                     "fill-opacity": 0.5
                 },
-                //filter: ['==', 'zLevel', 3]
+                filter: ['==', 'zLevel', myMap.zLevel]
             });
 
             myMap.on('zlevel', () => {
@@ -104,32 +100,40 @@
         function addClickEvents(){
 
             myMap.layerEventHandler.on('click', 'geojsonPOIs', (e, features) => {
-                console.log('Clicked layer geojsonPOIs', e, features);
                 var feature = features && features[0];
-                showPopupOnPoi( feature, e.lngLat );
+                printPoiData(feature);
+                //onMapClick();
+                //showPopupOnPoi( feature, e.lngLat );
             })
 
             myMap.layerEventHandler.on('click', null, (e) => {
                 Mazemap.Data.getPoiAt( e.lngLat, myMap.getZLevel() )
                 .then( ( poi ) => {
-                    console.log('Clicked on the base map, poi here is:', poi);
+                    printNotALab(poi);
                 });
             })
         }
 
         // Take an array of maemap features and draw them on the map
         function drawFeatures( featuresArray ){
-            console.log(featuresArray);
             myMap.getSource("geojsonPOIs").setData( {type: "FeatureCollection", features: featuresArray});
         }
-
         function readExcel(){
-            var rl=readExcelFile("lablist.xlsx").then( (workbook) => {
-                var sheet = window.sheet = new ExcelSheet(workbook.Sheets[ workbook.SheetNames[0] ]);
-
-                var jsonRows = sheet.getRangeAsJSON("A1:E10")
+            var rl=readExcelFile("lablist2.xlsx").then( (workbook) => {
+                sheet = window.sheet = new ExcelSheet(workbook.Sheets[ workbook.SheetNames[0] ]);
+                var jsonRows = sheet.getRangeAsJSON(sheet.sheet["!ref"])
                         .filter( (a) => {return Object.keys(a).length>0;});
                 var rl = fetchIdentifiers( jsonRows, "mazemap-id" );
+
+                // all rooms in TEO H5
+                /*
+                Mazemap.Data.getPois({campusid: 5, buildingid: 94}).then( pois => {
+                    pois.map( poi => {
+                        //poi.properties.
+                        console.log(poi.properties.title);
+                    })
+                } )*/
+
                 return rl;
             });
             return rl;
@@ -147,10 +151,18 @@
                         .catch( (e) => {
                         }).then( (feature) => { return feature || false })
                         .then( (feature) => {
-                            Object.assign( feature.properties, poiObject );
+                            if(feature){
+                                Object.assign(feature.properties, {"labprops":poiObject});
+                                // allow lab-booking? determines color of highlighted area on the map
+                                var hlcolor={"highlight-color":"red"};
+                                if("Booking" in feature.properties.labprops && feature.properties
+                                    .labprops["Booking"].trim().toLowerCase().localeCompare("yes")==0){
+                                    hlcolor["highlight-color"]="green"; 
+                                } 
+                                Object.assign( feature.properties, hlcolor );
+                            }
                             return feature;
                         });
-
                 return request;
             });
 
@@ -165,6 +177,7 @@
         var mazeMarker;
 
         function onMapClick(e){
+            // this is on the global map: Whatever room is selected, is being highlighted (but not info'ed)
             // Clear existing, if any
             clearPoiMarker();
 
@@ -174,18 +187,65 @@
             // Fetching via Data API
             Mazemap.Data.getPoiAt(lngLat, zLevel).then( poi => {
 
-                printPoiData(poi);
+                //printPoiData(poi);
 
                 placePoiMarker(poi);
 
             }).catch( function(){ return false; } );
         }
 
+        
+        var props;
+        var special_props=["Booking", "contact", "Research Group", "image", "nickname", "mazemap-id"];
         function printPoiData(poi){
             var poiStr = JSON.stringify(poi, null, 2); // spacing level = 2
-            document.getElementById('poi-data').innerHTML = poiStr;
 
-            console.log(poi); // Can also look in your console to see the object there
+            // grab the right lab from the global lablist and print stuff
+            lablist.then( (labl) => {return labl.filter( (lab) => {
+                return lab.properties.identifier.trim()
+                    .localeCompare(poi.properties.identifier.trim())==0 
+                })[0]} )
+                .then( lab => {
+                    props=lab.properties.labprops;
+                    var info="";
+                    
+                    info += `<h3>Responsible research group:</h3>${props["Research Group"]} ` 
+                    info += `(contact: <a href="mailto:${props.contact}">${props.contact}</a>)`
+                    info += `<h3>Available in booking system?</h3> ${props.Booking}`
+
+                    
+                    for (const [key, value] of Object.entries(props)) {
+                        if(special_props.includes(key)){
+                            continue;
+                        }
+                        info += `<h3>${key}:</h3>${value}`
+                    }
+                    document.getElementById('lab-info').innerHTML = info;
+
+                    var imginfo="";
+                    imginfo += "<h3>Images:</h3>";
+                    if("image" in props && props.image.length > 0){
+                        imginfo += props.image.split(";").map(img => {
+                            var imgstr = img.trim();
+                            return `<a href='pics/${imgstr}'><img style='border-style:solid;' height='200px' src='pics/${imgstr}'></img></a>`;
+                        }).join(" ")
+                    } else {
+                        imginfo += "no images available"
+                    }
+                    document.getElementById('labimages').innerHTML = imginfo;
+
+                    var tit=lab.properties["title"];
+                    if("nickname" in props && props.nickname.length>0){
+                        tit += ` (${props.nickname})`
+                    }
+                    document.getElementById('room-num').innerHTML = tit;
+                })            
+        }
+        function printNotALab(poi){
+            var poiStr = JSON.stringify(poi, null, 2); // spacing level = 2
+            document.getElementById('lab-info').innerHTML = poiStr;
+            document.getElementById('room-num').innerHTML = "Not a Lab!";
+            document.getElementById('labimages').innerHTML = "<h3>Images:</h3>No images available"
         }
 
         function clearPoiMarker(poi){
