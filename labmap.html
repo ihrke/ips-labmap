@@ -236,7 +236,7 @@
                     if("image" in props && props.image.length > 0){
                         imginfo += props.image.split(";").map(img => {
                             var imgstr = img.trim();
-                            return `<a href='pics/${imgstr}'><img style='border-style:solid;' height='200px' src='pics/${imgstr}'></img></a>`;
+                            return `<a href='pics/org/${imgstr}'><img style='border-style:solid;' height='200px' src='pics/small/${imgstr}'></img></a>`;
                         }).join(" ")
                     } else {
                         imginfo += "no images available"
